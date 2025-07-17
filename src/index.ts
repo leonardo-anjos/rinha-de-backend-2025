@@ -3,8 +3,11 @@ import paymentRoutes from './routes/payment';
 import paymentSummaryRoutes from './routes/paymentSummary';
 import serviceHealthRoutes from './routes/serviceHealth';
 import logger from './plugins/logger';
+import prismaPlugin from './plugins/prisma'
 
 const app = Fastify({ logger });
+
+app.register(prismaPlugin)
 
 app.register(paymentRoutes);
 app.register(paymentSummaryRoutes);

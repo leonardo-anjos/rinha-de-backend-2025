@@ -2,12 +2,13 @@ import { FastifyPluginAsync } from 'fastify';
 import { getFailureStats } from '../services/circuitBreaker';
 
 const serviceHealthRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.get('/payments/service-health', async (_req, reply) => {
+  fastify.get('/payments/service-health', async (_request, reply) => {
     const stats = getFailureStats();
-    reply.send({
-      isDegraded: stats.failures >= 3,
-      lastFailure: stats.lastFail,
-      totalFailures: stats.failures,
+
+    return reply.status(200).send({
+      failing: stats.failures >= 3, // indicando se está falhando de verdade
+      lastFailure: stats.lastFail,  // timestamp da última falha
+      totalFailures: stats.failures, // total de falhas contabilizadas
     });
   });
 };
