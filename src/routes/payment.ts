@@ -27,7 +27,6 @@ const paymentRoutes: FastifyPluginAsync = async (fastify) => {
     let method = '';
 
     try {
-      // Health-check e circuit breaker do primário
       const primaryHealth = await getProcessorHealth('primary');
       const primaryBreaker = shouldUseCircuitBreaker('primary');
 

@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import Fastify from 'fastify';
 import paymentRoutes from './routes/payment';
 import paymentSummaryRoutes from './routes/paymentSummary';

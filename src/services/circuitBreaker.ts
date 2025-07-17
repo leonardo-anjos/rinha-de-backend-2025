@@ -1,3 +1,5 @@
+import { PAYMENT_PROCESSOR_PRIMARY_HEALTH_URL, PAYMENT_PROCESSOR_FALLBACK_HEALTH_URL } from '../utils/config';
+
 interface CircuitBreakerState {
   failures: number;
   lastFail: number;
@@ -38,8 +40,8 @@ const healthCache: Record<string, HealthStatus> = {
 };
 
 const processorHealthUrls: Record<string, string> = {
-  primary: process.env.PAYMENT_PROCESSOR_PRIMARY_HEALTH_URL || 'http://localhost:4000/payments/service-health',
-  fallback: process.env.PAYMENT_PROCESSOR_FALLBACK_HEALTH_URL || 'http://localhost:4001/payments/service-health',
+  primary: PAYMENT_PROCESSOR_PRIMARY_HEALTH_URL,
+  fallback: PAYMENT_PROCESSOR_FALLBACK_HEALTH_URL,
 };
 
 export const getProcessorHealth = async (processor: 'primary' | 'fallback'): Promise<HealthStatus> => {
