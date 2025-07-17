@@ -1,19 +1,71 @@
-let failures = 0;
-let lastFail = 0;
+interface CircuitBreakerState {
+  failures: number;
+  lastFail: number;
+}
 
-export const recordFailure = () => {
-  failures++;
-  lastFail = Date.now();
+const circuitBreakers: Record<string, CircuitBreakerState> = {
+  primary: { failures: 0, lastFail: 0 },
+  fallback: { failures: 0, lastFail: 0 },
 };
 
-export const shouldUseFallback = () => {
-  return failures >= 3 && Date.now() - lastFail < 30000;
+export const recordFailure = (processor: 'primary' | 'fallback') => {
+  circuitBreakers[processor].failures++;
+  circuitBreakers[processor].lastFail = Date.now();
 };
 
-export const resetFailures = () => {
-  failures = 0;
+export const shouldUseCircuitBreaker = (processor: 'primary' | 'fallback') => {
+  return circuitBreakers[processor].failures >= 3 && Date.now() - circuitBreakers[processor].lastFail < 30000;
 };
 
-export const getFailureStats = () => {
-  return { failures, lastFail };
+export const resetFailures = (processor: 'primary' | 'fallback') => {
+  circuitBreakers[processor].failures = 0;
+};
+
+export const getFailureStats = (processor: 'primary' | 'fallback') => {
+  return { ...circuitBreakers[processor] };
+};
+
+type HealthStatus = {
+  healthy: boolean;
+  minResponseTimeMs: number;
+  lastChecked: number;
+  lastResult: boolean;
+};
+
+const healthCache: Record<string, HealthStatus> = {
+  primary: { healthy: true, minResponseTimeMs: 0, lastChecked: 0, lastResult: true },
+  fallback: { healthy: true, minResponseTimeMs: 0, lastChecked: 0, lastResult: true },
+};
+
+const processorHealthUrls: Record<string, string> = {
+  primary: process.env.PAYMENT_PROCESSOR_PRIMARY_HEALTH_URL || 'http://localhost:4000/payments/service-health',
+  fallback: process.env.PAYMENT_PROCESSOR_FALLBACK_HEALTH_URL || 'http://localhost:4001/payments/service-health',
+};
+
+export const getProcessorHealth = async (processor: 'primary' | 'fallback'): Promise<HealthStatus> => {
+  const now = Date.now();
+  const cache = healthCache[processor];
+  if (now - cache.lastChecked < 5000) {
+    return cache;
+  }
+  try {
+    const res = await fetch(processorHealthUrls[processor]);
+    if (!res.ok) {
+      cache.healthy = false;
+      cache.lastResult = false;
+      cache.lastChecked = now;
+      return cache;
+    }
+    const data = await res.json();
+    cache.healthy = !(data as any).failing;
+    cache.minResponseTimeMs = (data as any).minResponseTimeMs || 0;
+    cache.lastResult = cache.healthy;
+    cache.lastChecked = now;
+    return cache;
+  } catch (e) {
+    cache.healthy = false;
+    cache.lastResult = false;
+    cache.lastChecked = now;
+    return cache;
+  }
 };

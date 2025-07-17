@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { processPrimary } from '../services/primaryProcessor';
 import { processFallback } from '../services/fallbackProcessor';
-import { recordFailure, resetFailures, shouldUseFallback } from '../services/circuitBreaker';
+import { recordFailure, resetFailures, shouldUseCircuitBreaker, getProcessorHealth } from '../services/circuitBreaker';
 import { measureTime } from '../utils/responseTimer';
 
 interface PaymentRequest {
@@ -27,25 +27,65 @@ const paymentRoutes: FastifyPluginAsync = async (fastify) => {
     let method = '';
 
     try {
-      // Mede o tempo de processamento do pagamento
+      // Health-check e circuit breaker do primário
+      const primaryHealth = await getProcessorHealth('primary');
+      const primaryBreaker = shouldUseCircuitBreaker('primary');
+
+      if (!primaryHealth.healthy || primaryBreaker) {
+        // Se primário indisponível, tenta fallback
+        usedFallback = true;
+        method = 'fallback';
+        const fallbackHealth = await getProcessorHealth('fallback');
+        const fallbackBreaker = shouldUseCircuitBreaker('fallback');
+        if (!fallbackHealth.healthy || fallbackBreaker) {
+          // Ambos indisponíveis
+          return reply.status(503).send({ error: 'No payment processor available' });
+        }
+        // Processa com fallback
+        const { result, time } = await measureTime(async () => {
+          try {
+            const res = await processFallback(amount);
+            fee = amount - res.netAmount;
+            resetFailures('fallback');
+            return res;
+          } catch (e) {
+            recordFailure('fallback');
+            throw e;
+          }
+        });
+        netAmount = result.netAmount;
+        // Persistir pagamento no banco
+        await fastify.prisma.payment.create({
+          data: {
+            correlationId,
+            amount: amount.toFixed(2),
+            method,
+            fee: fee.toFixed(2),
+          },
+        });
+        return reply.status(200).send({
+          correlationId,
+          amount,
+          netAmount,
+          usedFallback,
+          processingTimeMs: time,
+        } as PaymentResponse);
+      }
+
+      // Se primário disponível, tenta processar
+      method = 'primary';
       const { result, time } = await measureTime(async () => {
-        if (shouldUseFallback()) {
-          usedFallback = true;
-          method = 'fallback';
-          const res = await processFallback(amount);
-          fee = amount - res.netAmount;
-          return res;
-        } else {
-          method = 'primary';
+        try {
           const res = await processPrimary(amount);
-          resetFailures(); // sucesso no primário, resetar contagem de falhas
           fee = amount - res.netAmount;
+          resetFailures('primary');
           return res;
+        } catch (e) {
+          recordFailure('primary');
+          throw e;
         }
       });
-
       netAmount = result.netAmount;
-
       // Persistir pagamento no banco
       await fastify.prisma.payment.create({
         data: {
@@ -55,7 +95,6 @@ const paymentRoutes: FastifyPluginAsync = async (fastify) => {
           fee: fee.toFixed(2),
         },
       });
-
       return reply.status(200).send({
         correlationId,
         amount,
@@ -63,44 +102,48 @@ const paymentRoutes: FastifyPluginAsync = async (fastify) => {
         usedFallback,
         processingTimeMs: time,
       } as PaymentResponse);
-
     } catch (error) {
-      // Ao capturar erro no primário ou fallback, registrar falha
-      recordFailure();
-      if (!usedFallback) {
-        try {
-          // tenta fallback em caso de erro no primário
-          const { result, time } = await measureTime(() => processFallback(amount));
-          usedFallback = true;
-          netAmount = result.netAmount;
-          method = 'fallback';
-          fee = amount - result.netAmount;
-
-          // Persistir pagamento no banco
-          await fastify.prisma.payment.create({
-            data: {
-              correlationId,
-              amount: amount.toFixed(2),
-              method,
-              fee: fee.toFixed(2),
-            },
-          });
-
-          return reply.status(200).send({
-            correlationId,
-            amount,
-            netAmount,
-            usedFallback,
-            processingTimeMs: time,
-          } as PaymentResponse);
-        } catch (fallbackError) {
-          // erro em ambos os processadores, responde com erro 500
-          fastify.log.error(fallbackError);
-          return reply.status(500).send({ error: 'Payment processing failed on both processors' });
+      // Se falhou no primário, tenta fallback se possível
+      try {
+        const fallbackHealth = await getProcessorHealth('fallback');
+        const fallbackBreaker = shouldUseCircuitBreaker('fallback');
+        if (!fallbackHealth.healthy || fallbackBreaker) {
+          return reply.status(503).send({ error: 'No payment processor available' });
         }
-      } else {
-        fastify.log.error(error);
-        return reply.status(500).send({ error: 'Payment processing failed' });
+        usedFallback = true;
+        method = 'fallback';
+        const { result, time } = await measureTime(async () => {
+          try {
+            const res = await processFallback(amount);
+            fee = amount - res.netAmount;
+            resetFailures('fallback');
+            return res;
+          } catch (e) {
+            recordFailure('fallback');
+            throw e;
+          }
+        });
+        netAmount = result.netAmount;
+        // Persistir pagamento no banco
+        await fastify.prisma.payment.create({
+          data: {
+            correlationId,
+            amount: amount.toFixed(2),
+            method,
+            fee: fee.toFixed(2),
+          },
+        });
+        return reply.status(200).send({
+          correlationId,
+          amount,
+          netAmount,
+          usedFallback,
+          processingTimeMs: time,
+        } as PaymentResponse);
+      } catch (fallbackError) {
+        // erro em ambos os processadores, responde com erro 503
+        fastify.log.error(fallbackError);
+        return reply.status(503).send({ error: 'Payment processing failed on both processors' });
       }
     }
   });

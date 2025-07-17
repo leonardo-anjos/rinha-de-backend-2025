@@ -6,9 +6,9 @@ const serviceHealthRoutes: FastifyPluginAsync = async (fastify) => {
     const stats = getFailureStats();
 
     return reply.status(200).send({
-      failing: stats.failures >= 3, // indicando se está falhando de verdade
-      lastFailure: stats.lastFail,  // timestamp da última falha
-      totalFailures: stats.failures, // total de falhas contabilizadas
+      failing: stats.failures >= 3,
+      lastFailure: stats.lastFail,
+      totalFailures: stats.failures,
     });
   });
 };

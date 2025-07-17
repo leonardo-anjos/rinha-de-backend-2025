@@ -2,7 +2,6 @@ import { FastifyPluginAsync } from 'fastify';
 
 const paymentSummaryRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/payment-summary', async (request, reply) => {
-    // Busca todos os pagamentos do banco
     const payments = await fastify.prisma.payment.findMany();
 
     const totalProcessed = payments.length;
